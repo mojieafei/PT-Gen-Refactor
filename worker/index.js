@@ -646,19 +646,26 @@ async function validateRequest(request, corsHeaders, env) {
     } else {
       // 外部调用（包括直接浏览器访问），需要API密钥
       if (!apiKey) {
-        return {
-          valid: false,
-          response: new Response(
-            JSON.stringify({ error: "API key required. Access denied." }),
-            {
-              status: 401,
-              headers: {
-                "Content-Type": "application/json",
-                ...corsHeaders
+        //检查是否浏览器直接访问根路径
+        const uri = new URL(request.url);
+        if (uri.pathname === "/" && request.method === "GET") {
+          // 允许浏览器访问根路径，返回API文档
+          return { valid: false, response: await handleRootRequest(env, true) };
+        } else {
+          return {
+            valid: false,
+            response: new Response(
+              JSON.stringify({ error: "API key required. Access denied." }),
+              {
+                status: 401,
+                headers: {
+                  "Content-Type": "application/json",
+                  ...corsHeaders
+                }
               }
-            }
-          )
-        };
+            )
+          };
+        }
       }
       
       // 验证API密钥是否正确
