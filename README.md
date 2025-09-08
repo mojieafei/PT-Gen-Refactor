@@ -127,6 +127,8 @@ AUTHOR = "your_author"
 TMDB_API_KEY = "your_tmdb_api_key"
 # 豆瓣Cookie（可选，用于获取更多信息）
 DOUBAN_COOKIE = "your_douban_cookie"
+# 安全API密钥（可选）
+API_KEY = "your_api_key"
 ```
 
 ### 3. 部署方式
@@ -166,11 +168,11 @@ Published pt-gen-refactor (0.3 seconds)
 这种方式将后端 API 部署到 Cloudflare Worker。
 
 1. 构建后端应用：
-  ```bash
-  cd worker
-  npx wrangler deploy
-  cd ..
-  ```
+   ```bash
+   cd worker
+   npx wrangler deploy
+   cd ..
+   ```
 
 部署成功后，会输出类似以下的信息：
 ```
@@ -195,17 +197,14 @@ Published pt-gen-refactor (0.3 seconds)
 ## 使用说明
 
 1. **豆瓣功能限制**：如果不提供豆瓣 Cookie，将无法获取一些需要登录才能查看的条目信息。
-
 2. **反爬虫机制**：短时间不要重复请求多次豆瓣，否则会触发豆瓣的反爬虫机制。
-
 3. **TMDB 功能限制**：需要提供 TMDB API 密钥，否则将无法获取 TMDB 资源信息。
-
 4. **搜索功能限制**：如要使用中文搜索功能,必须要配置TMDB API KEY,如果没有配置的话,则只能使用英文进行搜索(调用IMDB)。
-
-4. 启动应用后，访问前端地址 (默认 https://pt-gen-refactor.your-subdomain.workers.dev)
-5. 输入媒体资源的链接或 ID
-6. 系统将自动获取并生成标准 PT 描述
-7. 复制生成的描述用于 PT 站点发布
+5. **安全API 密钥**：如配置了安全API密钥,则调用时必须携带URL参数"key=YOUR_API_KEY",才能获取数据。
+6. 启动应用后，访问前端地址 (默认 https://pt-gen-refactor.your-subdomain.workers.dev)
+7. 输入媒体资源的链接或 ID
+8. 系统将自动获取并生成标准 PT 描述
+9. 复制生成的描述用于 PT 站点发布
 
 ## 感谢
 
