@@ -219,13 +219,12 @@ export async function gen_douban(sid, env) {
           awards = awardItems.join('\n');
         } else {
           // 如果上面的方法没有提取到数据，使用备用方案
-          awards = $aw("#content > div > div.article").html() || '';
+          const $article = $aw("#content > div > div.article");
+          awards = $article.text() || '';
           if (awards) {
-            awards = awards.replace(/[\s\n]+/g, ' ').replace(/<\/li><li>/g, "</li> <li>").replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
-            // 使用简单的分隔方式
-            data.awards = awards.split(' <li> ')
-              .map(item => item.replace(/^<li>/, '').trim())
-              .filter(item => item.length > 0);
+            // 直接从文章内容中提取文本，并按行分割为数组
+            data.awards = awards.split('\n').map(item => item.trim()).filter(item => item.length > 0);
+            awards = data.awards.join('\n');
           }
         }
       }
