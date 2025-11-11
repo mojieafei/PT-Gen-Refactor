@@ -187,14 +187,52 @@ export async function gen_douban(sid, env) {
       if (awardsResp && awardsResp.ok) {
         const awardsRaw = await awardsResp.text();
         const $aw = page_parser(awardsRaw);
-        awards = $aw("#content > div > div.article").html() || '';
-        if (awards) {
-          awards = awards.replace(/[\s\n]+/g, ' ').replace(/<\/li><li>/g, "</li> <li>").replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
-          // 将awards字符串分割成数组
-          data.awards = awards.split(/\s*[\/>\n]\s*/).filter(item => item.trim().length > 0).map(item => item.trim());
+        
+        // 根据实际HTML结构调整解析逻辑
+        const awardItems = [];
+        $aw('.mod').each(function() {
+          const $mod = $aw(this);
+          // 遍历每个award列表
+          $mod.find('ul.award').each(function() {
+            const $ul = $aw(this);
+            const items = $ul.find('li');
+            if (items.length >= 2) {
+              // 提取电影节名称
+              const festival = $aw(items[0]).text().trim();
+              // 提取奖项类别
+              const category = $aw(items[1]).text().trim();
+              // 提取获奖者（如果有）
+              const winners = $aw(items[2]).text().trim();
+              
+              // 组合完整信息
+              let fullInfo = `${festival} ${category}`;
+              if (winners) {
+                fullInfo += ` ${winners}`;
+              }
+              awardItems.push(fullInfo);
+            }
+          });
+        });
+        
+        if (awardItems.length > 0) {
+          data.awards = awardItems;
+          awards = awardItems.join('\n');
+        } else {
+          // 如果上面的方法没有提取到数据，使用备用方案
+          awards = $aw("#content > div > div.article").html() || '';
+          if (awards) {
+            awards = awards.replace(/[\s\n]+/g, ' ').replace(/<\/li><li>/g, "</li> <li>").replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+            // 使用简单的分隔方式
+            data.awards = awards.split(' <li> ')
+              .map(item => item.replace(/^<li>/, '').trim())
+              .filter(item => item.length > 0);
+          }
         }
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) { 
+      console.error('Awards parsing error:', e);
+      /* ignore */ 
+    }
 
     // 处理 IMDb JSONP 响应
     if (imdb_api_req) {
@@ -247,8 +285,16 @@ export async function gen_douban(sid, env) {
     }
 
     if (data.tags && data.tags.length) descr += `\n❁ 标　　签:　${data.tags.join(" | ")}\n`;
-    if (data.introduction) descr += `❁ 简　　介　　${data.introduction.replace(/\n/g, "\n　　")}`;
-    if (awards) descr += `❁ 获奖情况　　${awards.replace(/\n/g, "\n　　")}`;
+    if (data.introduction) descr += `
+❁ 简　　介
+
+　　${data.introduction.replace(/\n/g, "\n　　")}
+`;
+    if (awards) descr += `
+❁ 获奖情况
+
+　　${awards.replace(/\n/g, "\n　　")}
+`;
 
     data.format = descr.trim();
     data.success = true;
