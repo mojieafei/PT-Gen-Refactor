@@ -52,10 +52,6 @@ async function fetchWithTimeout(url, opts = {}, timeout = DEFAULT_TIMEOUT) {
   }
 }
 
-function safeTrim(s) {
-  return s == null ? '' : String(s).trim();
-}
-
 function pickFirstString(val) {
   if (Array.isArray(val)) return val[0] ?? '';
   if (typeof val === 'string') return val;

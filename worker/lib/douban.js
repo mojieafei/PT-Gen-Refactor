@@ -189,6 +189,7 @@ export async function gen_douban(sid, env) {
         awards = $aw("#content > div > div.article").html() || '';
         if (awards) {
           awards = awards.replace(/[\s\n]+/g, ' ').replace(/<\/li><li>/g, "</li> <li>").replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+          data.awards = awards;
         }
       }
     } catch (e) { /* ignore */ }
