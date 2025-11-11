@@ -537,14 +537,77 @@ async function handleAutoSearch(query, env) {
 async function handleUrlRequest(url_, env) {
   console.log(`Processing URL request: url=${url_}`);
   
+  // 提取统一的资源标识符
+  let resourceId = null;
+  
+  // 判断URL类型并提取资源ID
+  if (url_.includes("://movie.douban.com/")) {
+    // 豆瓣电影
+    const sid = url_.match(/\/subject\/(\d+)/)?.[1];
+    if (sid) {
+      resourceId = `douban_${sid}`;
+    }
+  } else if (url_.includes("://www.imdb.com/")) {
+    // IMDb
+    const sid = url_.match(/\/title\/(tt\d+)/)?.[1];
+    if (sid) {
+      resourceId = `imdb_${sid}`;
+    }
+  } else if (url_.includes("://api.themoviedb.org/") || url_.includes("://www.themoviedb.org/")) {
+    // TMDB
+    const sid_match = url_.match(/\/(movie|tv)\/(\d+)/);
+    if (sid_match) {
+      const sid = `${sid_match[1]}/${sid_match[2]}`;
+      resourceId = `tmdb_${sid}`;
+    }
+  } else if (url_.includes("://www.melon.com/")) {
+    // Melon
+    const sid_match = url_.match(/\/album\/detail\.htm\?albumId=(\d+)/);
+    if (sid_match) {
+      const sid = `album/${sid_match[1]}`;
+      resourceId = `melon_${sid}`;
+    }
+  } else if (url_.includes("://bgm.tv/") || url_.includes("://bangumi.tv/")) {
+    // Bangumi
+    const sid = url_.match(/\/subject\/(\d+)/)?.[1];
+    if (sid) {
+      resourceId = `bgm_${sid}`;
+    }
+  } else if (url_.includes("://store.steampowered.com/")) {
+    // Steam
+    const sid = url_.match(/\/app\/(\d+)/)?.[1];
+    if (sid) {
+      resourceId = `steam_${sid}`;
+    }
+  }
+  
+  // 检查R2中是否已有缓存数据
+  if (resourceId && env.R2_BUCKET) {
+    try {
+      const cachedData = await env.R2_BUCKET.get(resourceId);
+      
+      if (cachedData) {
+        // 如果R2中有缓存数据，直接返回
+        const cachedText = await cachedData.text();
+        console.log(`Returning cached data for resource: ${resourceId}`);
+        return JSON.parse(cachedText);
+      }
+    } catch (e) {
+      console.error('Error reading from R2:', e);
+      // 如果R2读取失败，继续执行正常流程
+    }
+  }
+  
+  let result;
+  
   // 判断URL类型并调用相应函数
   if (url_.includes("://movie.douban.com/")) {
     // 豆瓣电影
     const sid = url_.match(/\/subject\/(\d+)/)?.[1];
     if (sid) {
-      return await gen_douban(sid, env);
+      result = await gen_douban(sid, env);
     } else {
-      return {
+      result = {
         success: false,
         error: "Invalid Douban movie URL"
       };
@@ -553,9 +616,9 @@ async function handleUrlRequest(url_, env) {
     // IMDb
     const sid = url_.match(/\/title\/(tt\d+)/)?.[1];
     if (sid) {
-      return await gen_imdb(sid, env);
+      result = await gen_imdb(sid, env);
     } else {
-      return {
+      result = {
         success: false,
         error: "Invalid IMDb title URL"
       };
@@ -564,10 +627,10 @@ async function handleUrlRequest(url_, env) {
     // TMDB
     const sid_match = url_.match(/\/(movie|tv)\/(\d+)/);
     if (sid_match) {
-      const sid = `${sid_match[1]}/${sid_match[2]}`;
-      return await gen_tmdb(sid, env);
+      const sid = `${sid_match[1]}/${sid_match[2]}`.replace(/\//g, '__');
+      result = await gen_tmdb(sid, env);
     } else {
-      return {
+      result = {
         success: false,
         error: "Invalid TMDB URL"
       };
@@ -578,9 +641,9 @@ async function handleUrlRequest(url_, env) {
     if (sid_match) {
       // 根据melon.js的实现，需要将sid格式化为"album/{id}"的形式
       const sid = `album/${sid_match[1]}`;
-      return await gen_melon(sid, env);
+      result = await gen_melon(sid, env);
     } else {
-      return {
+      result = {
         success: false,
         error: "Invalid Melon album URL"
       };
@@ -589,9 +652,9 @@ async function handleUrlRequest(url_, env) {
     // Bangumi
     const sid = url_.match(/\/subject\/(\d+)/)?.[1];
     if (sid) {
-      return await gen_bangumi(sid, env);
+      result = await gen_bangumi(sid, env);
     } else {
-      return {
+      result = {
         success: false,
         error: "Invalid Bangumi subject URL"
       };
@@ -600,19 +663,31 @@ async function handleUrlRequest(url_, env) {
     // Steam
     const sid = url_.match(/\/app\/(\d+)/)?.[1];
     if (sid) {
-      return await gen_steam(sid, env);
+      result = await gen_steam(sid, env);
     } else {
-      return {
+      result = {
         success: false,
         error: "Invalid Steam store URL"
       };
     }
   } else {
-    return {
+    result = {
       success: false,
       error: "Unsupported URL"
     };
   }
+  
+  // 如果获取到结果且R2可用，将结果存储到R2
+  if (result && resourceId && env.R2_BUCKET) {
+    try {
+      await env.R2_BUCKET.put(resourceId, JSON.stringify(result));
+      console.log(`Cached result for resource: ${resourceId}`);
+    } catch (e) {
+      console.error('Error writing to R2:', e);
+    }
+  }
+  
+  return result;
 }
 
 // 定义CORS常量
@@ -817,7 +892,8 @@ async function handleQueryRequest(request, env, uri) {
       // 如果指定了source，则使用指定的搜索源
       if (source === 'imdb' || source === 'tmdb') {
         // 处理搜索请求
-        return await handleSearchRequest(source, query, env);
+        const searchResult = await handleSearchRequest(source, query, env);
+        return searchResult;
       } else {
         response_data = {error: "Invalid source. Supported sources: douban, imdb, tmdb"};
       }
@@ -831,31 +907,123 @@ async function handleQueryRequest(request, env, uri) {
     } else if (tmdb_id) {
       // 处理TMDB ID请求
       console.log("处理TMDB ID请求:", tmdb_id);
-      response_data = await gen_tmdb(tmdb_id, env);
+      
+      // 构建统一的资源标识符
+      const resourceId = `tmdb_${String(tmdb_id).replace(/\//g, '__')}`;
+      
+      // 检查R2中是否已有缓存数据（针对TMDB ID请求）
+      if (env.R2_BUCKET) {
+        try {
+          const cachedData = await env.R2_BUCKET.get(resourceId);
+          
+          if (cachedData) {
+            // 如果R2中有缓存数据，直接返回
+            const cachedText = await cachedData.text();
+            console.log(`Returning cached data for resource: ${resourceId}`);
+            response_data = JSON.parse(cachedText);
+          }
+        } catch (e) {
+          console.error('Error reading from R2:', e);
+          // 如果R2读取失败，继续执行正常流程
+        }
+      }
+      
+      // 如果没有缓存数据，则正常处理
+      if (!response_data) {
+        response_data = await gen_tmdb(tmdb_id, env);
+        
+        // 如果获取到结果且R2可用，将结果存储到R2
+        if (response_data && env.R2_BUCKET) {
+          try {
+            await env.R2_BUCKET.put(resourceId, JSON.stringify(response_data));
+            console.log(`Cached result for resource: ${resourceId}`);
+          } catch (e) {
+            console.error('Error writing to R2:', e);
+          }
+        }
+      }
     } else if (source && sid) {
       // 处理直接SID请求（豆瓣、IMDb等）
       console.log(`处理${source} SID请求:`, sid);
+      
+      // 构建统一的资源标识符
+      let resourceId = null;
       switch (source.toLowerCase()) {
         case 'douban':
-          response_data = await gen_douban(sid, env);
+          resourceId = `douban_${sid}`;
           break;
         case 'imdb':
-          response_data = await gen_imdb(sid, env);
+          resourceId = `imdb_${sid}`;
           break;
         case 'tmdb':
-          response_data = await gen_tmdb(sid, env);
+          resourceId = `tmdb_${String(sid).replace(/\//g, '__')}`;
           break;
         case 'bgm':
-          response_data = await gen_bangumi(sid, env);
+          resourceId = `bgm_${sid}`;
           break;
         case 'melon':
-          response_data = await gen_melon(sid, env);
+          resourceId = `melon_${sid}`;
           break;
         case 'steam':
-          response_data = await gen_steam(sid, env);
+          resourceId = `steam_${sid}`;
           break;
         default:
-          response_data = {error: `Unsupported source: ${source}`};
+          resourceId = null;
+      }
+      
+      // 检查R2中是否已有缓存数据（针对SID请求）
+      if (resourceId && env.R2_BUCKET) {
+        try {
+          const cachedData = await env.R2_BUCKET.get(resourceId);
+          
+          if (cachedData) {
+            // 如果R2中有缓存数据，直接返回
+            const cachedText = await cachedData.text();
+            console.log(`Returning cached data for resource: ${resourceId}`);
+            response_data = JSON.parse(cachedText);
+          }
+        } catch (e) {
+          console.error('Error reading from R2:', e);
+          // 如果R2读取失败，继续执行正常流程
+        }
+      }
+      
+      // 如果没有缓存数据，则正常处理
+      if (!response_data) {
+        switch (source.toLowerCase()) {
+          case 'douban':
+            response_data = await gen_douban(sid, env);
+            break;
+          case 'imdb':
+            response_data = await gen_imdb(sid, env);
+            break;
+          case 'tmdb':
+            // 对 SID 进行解码以处理之前编码过的斜杠
+            const decodedSid = String(sid).replace(/__/g, '/');
+            response_data = await gen_tmdb(decodedSid, env);
+            break;
+          case 'bgm':
+            response_data = await gen_bangumi(sid, env);
+            break;
+          case 'melon':
+            response_data = await gen_melon(sid, env);
+            break;
+          case 'steam':
+            response_data = await gen_steam(sid, env);
+            break;
+          default:
+            response_data = {error: `Unsupported source: ${source}`};
+        }
+        
+        // 如果获取到结果且R2可用，将结果存储到R2
+        if (response_data && resourceId && env.R2_BUCKET) {
+          try {
+            await env.R2_BUCKET.put(resourceId, JSON.stringify(response_data));
+            console.log(`Cached result for resource: ${resourceId}`);
+          } catch (e) {
+            console.error('Error writing to R2:', e);
+          }
+        }
       }
     } else {
       // 参数不完整的情况

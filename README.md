@@ -44,6 +44,7 @@
 - 支持多种媒体类型（电影、电视剧、音乐、游戏等）
 - 智能搜索功能（根据关键词语言自动选择搜索平台）
 - 请求频率限制和恶意请求防护
+- R2缓存存储（避免重复抓取相同资源，提高响应速度）
 
 ## 环境要求
 
@@ -114,7 +115,16 @@ cd ..
    npx wrangler login
    ```
 
-### 2. 配置环境变量
+### 2. 创建 R2 存储桶
+
+R2 是 Cloudflare 提供的对象存储服务，本项目使用 R2 来缓存已抓取的数据，避免重复请求相同的资源。
+
+1. 登录 Cloudflare 控制台
+2. 导航到 R2 页面
+3. 创建一个新的存储桶，命名为 `pt-gen-cache`
+4. 确保存储桶名称与 `wrangler.toml` 文件中配置的 `bucket_name` 一致
+
+### 3. 配置环境变量
 
 编辑根目录下的 `wrangler.toml` 文件，更新以下配置：
 ```toml
@@ -133,6 +143,10 @@ TMDB_API_KEY = "your_tmdb_api_key"
 DOUBAN_COOKIE = "your_douban_cookie"
 # 安全API密钥（可选）
 API_KEY = "your_api_key"
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "pt-gen-cache"
 ```
 
 下表列出了所有可用的环境变量及其说明：
@@ -146,7 +160,7 @@ API_KEY = "your_api_key"
 
 > *注意：如果要使用中文搜索功能，必须配置 TMDB_API_KEY，否则只能使用英文进行搜索（调用 IMDb）。
 
-### 3. 部署方式
+### 4. 部署方式
 
 #### 方式一：前后端一起部署到 Cloudflare Worker（推荐）
 
@@ -225,10 +239,11 @@ Published pt-gen-refactor (0.3 seconds)
 3. **TMDB 功能限制**：需要提供 TMDB API 密钥，否则将无法获取 TMDB 资源信息。
 4. **搜索功能限制**：如要使用中文搜索功能,必须要配置TMDB API KEY,如果没有配置的话,则只能使用英文进行搜索(调用IMDB)。
 5. **安全API 密钥**：如配置了安全API密钥,则调用时必须携带URL参数"key=YOUR_API_KEY",才能获取数据。
-6. 启动应用后，访问前端地址 (默认 https://pt-gen-refactor.your-subdomain.workers.dev)
-7. 输入媒体资源的链接或 ID
-8. 系统将自动获取并生成标准 PT 描述
-9. 复制生成的描述用于 PT 站点发布
+6. **R2 缓存功能**：系统会自动将抓取的数据存储在 R2 中，下次请求相同资源时会直接从缓存中读取，提高响应速度并减少源站压力。
+7. 启动应用后，访问前端地址 (默认 https://pt-gen-refactor.your-subdomain.workers.dev)
+8. 输入媒体资源的链接或 ID
+9. 系统将自动获取并生成标准 PT 描述
+10. 复制生成的描述用于 PT 站点发布
 
 ## 感谢
 
