@@ -558,7 +558,7 @@ async function handleUrlRequest(url_, env) {
     const sid_match = url_.match(/\/(movie|tv)\/(\d+)/);
     if (sid_match) {
       const sid = `${sid_match[1]}/${sid_match[2]}`;
-      resourceId = `tmdb_${sid}`;
+      resourceId = `tmdb_${sid.replace(/\//g, '__')}`;
     }
   } else if (url_.includes("://www.melon.com/")) {
     // Melon
@@ -627,7 +627,7 @@ async function handleUrlRequest(url_, env) {
     // TMDB
     const sid_match = url_.match(/\/(movie|tv)\/(\d+)/);
     if (sid_match) {
-      const sid = `${sid_match[1]}/${sid_match[2]}`.replace(/\//g, '__');
+      const sid = `${sid_match[1]}/${sid_match[2]}`;
       result = await gen_tmdb(sid, env);
     } else {
       result = {
@@ -757,7 +757,7 @@ async function validateRequest(request, corsHeaders, env) {
               }
             }
           )
-        };
+        }
       }
     }
   }
@@ -930,7 +930,9 @@ async function handleQueryRequest(request, env, uri) {
       
       // 如果没有缓存数据，则正常处理
       if (!response_data) {
-        response_data = await gen_tmdb(tmdb_id, env);
+        // 对 TMDB ID 进行解码以处理之前编码过的斜杠
+        const decodedTmdbId = String(tmdb_id).replace(/__/g, '/');
+        response_data = await gen_tmdb(decodedTmdbId, env);
         
         // 如果获取到结果且R2可用，将结果存储到R2
         if (response_data && env.R2_BUCKET) {
@@ -956,7 +958,9 @@ async function handleQueryRequest(request, env, uri) {
           resourceId = `imdb_${sid}`;
           break;
         case 'tmdb':
-          resourceId = `tmdb_${String(sid).replace(/\//g, '__')}`;
+          // TMDB 的 sid 应该已经是编码格式（如 movie__12345），直接解码使用
+          const decodedSid = String(sid).replace(/__/g, '/');
+          response_data = await gen_tmdb(decodedSid, env);
           break;
         case 'bgm':
           resourceId = `bgm_${sid}`;
@@ -1018,6 +1022,7 @@ async function handleQueryRequest(request, env, uri) {
         // 如果获取到结果且R2可用，将结果存储到R2
         if (response_data && resourceId && env.R2_BUCKET) {
           try {
+            // 在存储时使用编码后的sid作为resourceId的一部分
             await env.R2_BUCKET.put(resourceId, JSON.stringify(response_data));
             console.log(`Cached result for resource: ${resourceId}`);
           } catch (e) {

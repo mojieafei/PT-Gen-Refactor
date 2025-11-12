@@ -156,7 +156,9 @@ function App() {
         // 处理TMDB链接
         const tmdbIdMatch = link.match(/movie\/(\d+)/) || link.match(/tv\/(\d+)/);
         if (tmdbIdMatch && tmdbIdMatch[1]) {
-          apiUrl = `/api?source=tmdb&sid=${tmdbIdMatch[0]}`;
+          // 修复：使用正确的捕获组，即数字ID部分
+          const mediaType = link.includes('/movie/') ? 'movie' : 'tv';
+          apiUrl = `/api?source=tmdb&sid=${mediaType}/${tmdbIdMatch[1]}`;
         } else {
           // 如果无法提取TMDB ID，直接使用链接
           apiUrl = `/api?url=${encodeURIComponent(link)}`;
