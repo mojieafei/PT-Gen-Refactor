@@ -232,6 +232,11 @@ Published pt-gen-refactor (0.3 seconds)
 - `/api?url=https://www.imdb.com/title/tt123456/` - 解析 IMDb 资源
 - `/api?url=https://www.themoviedb.org/movie/123456` - 解析 TMDB 资源
 
+### Params 参数方式
+- `/api?source=douban&sid=123456` - 解析豆瓣资源（包含演员/导演图片）
+- `/api?source=imdb&sid=tt123456` - 解析 IMDb 资源
+- `/api?source=tmdb&sid=123456`  - 解析 TMDB 资源
+
 ## 使用说明
 
 1. **豆瓣功能限制**：如果不提供豆瓣 Cookie，将无法获取一些需要登录才能查看的条目信息。
