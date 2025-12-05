@@ -1,4 +1,6 @@
-import { fetchWithTimeout, generateBangumiFormat } from "./common.js";
+import { fetchWithTimeout } from "./common.js";
+import { generateBangumiFormat } from "./format.js";
+import { getStaticMediaDataFromOurBits, formatCharacters, ensureArray, safe } from "./utils.js";
 
 const BGM_API_BASE = "https://api.bgm.tv/v0";
 const BGM_API_HEADERS = {
@@ -9,8 +11,7 @@ const BGM_API_HEADERS = {
   'Connection': 'keep-alive',
   'Referer': 'https://bgm.tv/'
 };
-const safe = (v, fallback = '') => v ?? fallback;
-const ensureArray = v => Array.isArray(v) ? v : (v ? [v] : []);
+
 const TYPE_MAP = new Map([
   ['anime', '动画'],
   ['book', '书籍'],
@@ -25,27 +26,6 @@ const TYPE_MAP = new Map([
   [4, '游戏'],
   [6, '三次元']
 ]);
-
-/**
- * 格式化角色信息数组，将角色数据转换为特定格式的字符串数组
- * @param {Array} chars - 角色对象数组，每个对象包含角色信息
- * @returns {Array<string>} 返回格式化后的角色信息字符串数组，格式为"角色名: 声优名"
- */
-const formatCharacters = (chars = []) => {
-  const results = [];
-  for (const c of chars) {
-    if (!c) continue;
-    const name = safe(c.name);
-    const nameCn = safe(c.name_cn);
-    const actors = ensureArray(c.actors)
-      .map(a => safe(a?.name_cn || a?.name))
-      .filter(Boolean)
-      .join('、') || '未知';
-    const title = nameCn ? `${name} (${nameCn})` : name || nameCn;
-    if (title) results.push(`${title}: ${actors}`);
-  }
-  return results;
-};
 
 /**
  * 标准化条目类型，根据传入的subject对象获取可读的类型名称
@@ -107,7 +87,7 @@ const getInfoboxArrayValues = (infobox, key) => {
  *   - success: 是否成功获取并处理了数据
  *   - 其他字段根据 Bangumi API 的响应进行映射与加工
  */
-export async function gen_bangumi(sid) {
+export async function gen_bangumi(sid, env) {
   const data = { site: "bangumi", sid };
   if (!sid) return Object.assign(data, { error: "Invalid Bangumi subject id" });
 
@@ -115,6 +95,24 @@ export async function gen_bangumi(sid) {
   const charactersUrl = `${subjectUrl}/characters`;
 
   try {
+    if (env.ENABLED_CACHE === "false") {
+          // 尝试从PtGen Archive获取数据
+          const cachedData = await getStaticMediaDataFromOurBits(
+            "bangumi",
+            sid
+          );
+          if (cachedData) {
+            console.log(`[Cache Hit] GitHub OurBits DB For Bangumi ${sid}`);
+            if (typeof cachedData.staff === 'object' && cachedData.staff !== null) {
+                data.director = getInfoboxArrayValues(cachedData.staff, '导演');
+                data.writer = getInfoboxArrayValues(cachedData.staff, '脚本');
+            } else {
+                data.director = [];
+                data.writer = [];
+            }
+            return { ...data, ...cachedData, success: true };
+          }
+    } else {
     const subjResp = await fetchWithTimeout(subjectUrl, { headers: BGM_API_HEADERS, timeout: 20000 });
     if (!subjResp) return Object.assign(data, { error: "No response from Bangumi API" });
 
@@ -184,6 +182,7 @@ export async function gen_bangumi(sid) {
     data.success = true;
 
     return data;
+  }
   } catch (e) {
     const message = e?.message || String(e);
     return Object.assign(data, { error: `Bangumi processing error: ${message}` });

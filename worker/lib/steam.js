@@ -1,8 +1,9 @@
-import {  DEFAULT_TIMEOUT, fetchWithTimeout, generateSteamFormat } from "./common.js";
+import {  DEFAULT_TIMEOUT, fetchWithTimeout } from "./common.js";
+import { generateSteamFormat } from "./format.js";
+import { getStaticMediaDataFromOurBits, safe } from "./utils.js";
 
 const STEAM_APP_DETAILS_URL = "https://store.steampowered.com/api/appdetails";
 const MAX_SCREENSHOTS = 3;
-const safe = (v, fallback = '') => (v === undefined || v === null ? fallback : v);
 const isNumericString = s => typeof s === 'string' && /^\d+$/.test(s);
 const formatPrice = p => {
   if (!p || typeof p !== 'object') return null;
@@ -19,14 +20,23 @@ const formatPrice = p => {
  * @returns {Promise<object>} 返回一个包含Steam游戏数据的对象，包括基本信息、价格、系统需求等，
  *                           若发生错误则返回带有error字段的失败信息
  */
-export const gen_steam = async (sid) => {
-  let data = { site: "steam", sid: sid };
+export const gen_steam = async (sid, env) => {
+  const data = { site: 'steam', sid: sid };
 
   try {
     if (!sid || (!isNumericString(String(sid)))) {
       return Object.assign(data, { error: "Invalid Steam ID format. Expected numeric appid" });
     }
     const appid = String(sid);
+
+    if (env.ENABLED_CACHE === 'false') {
+      const cachedData = await getStaticMediaDataFromOurBits('steam', appid);
+      if (cachedData) {
+        console.log(`[Cache Hit] GitHub OurBits DB For steam ${appid}`);
+        return { ...data, ...cachedData, success: true };
+      }
+    }
+    
 
     const steam_api_url = `${STEAM_APP_DETAILS_URL}?appids=${encodeURIComponent(appid)}&l=cn`;
     let steam_response;

@@ -181,8 +181,10 @@ TMDB_API_KEY = "your_tmdb_api_key"
 DOUBAN_COOKIE = "your_douban_cookie"
 # 安全API密钥（可选）
 API_KEY = "your_api_key"
+# 静态资源缓存配置,如设置为false则豆瓣、IMDB、Bangumi、Steam 优先从[PtGen Archive](https://github.com/ourbits/PtGen)获取数据，true则会优先从R2或D1获取数据
+ENABLED_CACHE = "true"
 
-# R2 存储桶配置（可选，选择一种缓存方式即可）
+# R2 存储桶配置（可选，选择一种缓存方式即可）[推荐]
 [[r2_buckets]]
 binding = "R2_BUCKET"
 bucket_name = "pt-gen-cache"
@@ -280,7 +282,34 @@ Published pt-gen-refactor (0.3 seconds)
 ### Params 参数方式
 - `/api?source=douban&sid=123456` - 解析豆瓣资源（包含演员/导演图片）
 - `/api?source=imdb&sid=tt123456` - 解析 IMDb 资源
-- `/api?source=tmdb&sid=123456`  - 解析 TMDB 资源
+- `/api?source=tmdb&sid=123456&type=movie`  - 解析 TMDB 电影资源（使用 type 参数）
+- `/api?source=tmdb&sid=123456&type=tv`  - 解析 TMDB 电视剧资源（使用 type 参数）
+
+## 新增功能亮点
+
+- **豆瓣信息增强**：豆瓣资源现在包含演员和导演的图片信息
+- **更丰富的元数据**：提供更完整的媒体信息用于PT站点发布
+- **性能优化**：改进了数据抓取和处理逻辑
+- **多种缓存选择**：支持 R2 对象存储和 D1 数据库两种缓存方式，用户可根据需求选择
+- **静态数据缓存**：新增对豆瓣、IMDb、Bangumi和Steam平台的静态数据缓存支持 [PtGen Archive](https://github.com/ourbits/PtGen)
+
+
+### getStaticMediaDataFromOurBits
+
+该函数用于从OurBits的静态数据源获取媒体信息，作为API调用失败时的备选方案。
+
+```javascript
+getStaticMediaDataFromOurBits(source, sid)
+```
+
+**参数说明**:
+- `source`: 媒体来源平台，如"douban"、"imdb"、"bangumi"、"steam"等
+- `sid`: 媒体资源的唯一标识符
+
+**返回值**:
+返回从静态数据源获取的媒体信息对象，如果所有数据源都不可用则返回null。
+
+当环境变量`ENABLED_CACHE`设置为"false"时，各平台的数据获取函数（gen_douban、gen_imdb、gen_bangumi、gen_steam）会优先尝试从此静态数据源获取数据。
 
 ## 使用说明
 
@@ -290,17 +319,11 @@ Published pt-gen-refactor (0.3 seconds)
 4. **搜索功能限制**：如要使用中文搜索功能,必须要配置TMDB API KEY,如果没有配置的话,则只能使用英文进行搜索(调用IMDB)。
 5. **安全API 密钥**：如配置了安全API密钥,则调用时必须携带URL参数"key=YOUR_API_KEY",才能获取数据。
 6. **缓存功能**：系统支持 R2 或 D1 作为缓存存储，会自动将抓取的数据存储在配置的存储中，下次请求相同资源时会直接从缓存中读取，提高响应速度并减少源站压力。
-7. 启动应用后，访问前端地址 (默认 https://pt-gen-refactor.your-subdomain.workers.dev)
-8. 输入媒体资源的链接或 ID
-9. 系统将自动获取并生成标准 PT 描述（豆瓣资源包含演员/导演图片信息）
-10. 复制生成的描述用于 PT 站点发布
-
-## 新增功能亮点
-
-- **豆瓣信息增强**：豆瓣资源现在包含演员和导演的图片信息
-- **更丰富的元数据**：提供更完整的媒体信息用于PT站点发布
-- **性能优化**：改进了数据抓取和处理逻辑
-- **多种缓存选择**：支持 R2 对象存储和 D1 数据库两种缓存方式，用户可根据需求选择
+7. **TMDB 参数要求**：当使用参数方式请求 TMDB 资源时，必须提供 type 参数指定媒体类型（movie 或 tv）。
+8. 启动应用后，访问前端地址 (默认 https://pt-gen-refactor.your-subdomain.workers.dev)
+9. 输入媒体资源的链接或 ID
+10. 系统将自动获取并生成标准 PT 描述（豆瓣资源包含演员/导演图片信息）
+11. 复制生成的描述用于 PT 站点发布
 
 ## 感谢
 
@@ -317,3 +340,7 @@ Published pt-gen-refactor (0.3 seconds)
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request 来改进项目。
+
+## 版本更新说明
+
+有关详细的版本更新历史，请参阅 [VERSION.md](VERSION.md) 文件。

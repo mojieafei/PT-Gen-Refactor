@@ -1,312 +1,453 @@
-import { NONE_EXIST_ERROR, DEFAULT_TIMEOUT, page_parser, jsonp_parser, fetchWithTimeout, generateDoubanFormat } from "./common.js";
+import { NONE_EXIST_ERROR, DEFAULT_TIMEOUT, page_parser, jsonp_parser, fetchWithTimeout } from "./common.js";
+import { generateDoubanFormat } from "./format.js";
+import { getStaticMediaDataFromOurBits, parseDoubanAwards, safe } from "./utils.js";
 
 const REQUEST_HEADERS_BASE = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-  'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8',
-  'Accept-Encoding': 'gzip, deflate, br, zstd',
-  'Cache-control': 'max-age=0',
-  'Connection': 'keep-alive',
-  'Upgrade-Insecure-Requests': '1',
-  'Sec-Fetch-Dest': 'document',
-  'Sec-Fetch-Mode': 'navigate',
-  'Sec-Fetch-Site': 'none',
-  'Sec-Fetch-User': '?1',
-  'sec-ch-ua': '"Chromium";v="142", "Google Chrome";v="142", "Not_A Brand";v="99"',
-  'sec-ch-ua-mobile': '?0',
-  'sec-ch-ua-platform': '"Windows"'
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+  "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8",
+  "Accept-Encoding": "gzip, deflate, br, zstd",
+  "Cache-control": "max-age=0",
+  Connection: "keep-alive",
+  "Upgrade-Insecure-Requests": "1",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+  "sec-ch-ua":
+    '"Chromium";v="142", "Google Chrome";v="142", "Not_A Brand";v="99"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"Windows"',
 };
-const safe = (v, fallback = '') => (v === undefined || v === null ? fallback : v);
 
 /**
  * 构建请求头对象
- * @param {Object} env - 环境变量对象，可选
+ * @param {Object} env - 环境变量对象
  * @param {string} env.DOUBAN_COOKIE - 豆瓣Cookie值
  * @returns {Object} 包含基础请求头和可选Cookie的请求头对象
  */
 const buildHeaders = (env = {}) => {
-  const h = { ...REQUEST_HEADERS_BASE };
-  if (env?.DOUBAN_COOKIE) h['Cookie'] = env.DOUBAN_COOKIE;
-  return h;
+  const headers = { ...REQUEST_HEADERS_BASE };
+  if (env?.DOUBAN_COOKIE) {
+    headers.Cookie = env.DOUBAN_COOKIE;
+  }
+  return headers;
 };
 
-const fetch_anchor = anchor => {
+/**
+ * 从锚点元素提取文本内容
+ * @param {Object} anchor - 锚点对象
+ * @returns {string} 提取的文本内容
+ */
+const fetchAnchorText = (anchor) => {
   try {
-    if (!anchor || !anchor[0]) return '';
-      const ns = anchor[0].nextSibling;
-      if (ns && ns.nodeValue) return ns.nodeValue.trim();
-      const parent = anchor.parent();
-      if (parent && parent.length) {
-        const txt = parent.text().replace(anchor.text(), '').trim();
-        return txt;
-      }
-  } catch (e) { /* ignore */ }
+    if (!anchor?.length) return '';
+
+    const nextSibling = anchor[0].nextSibling;
+    if (nextSibling?.nodeValue) {
+      return nextSibling.nodeValue.trim();
+    }
+    
+    const parent = anchor.parent();
+    if (parent?.length) {
+      return parent.text().replace(anchor.text(), '').trim();
+    }
+  } catch (error) {
+    console.warn('Error in fetchAnchorText:', error);
+  }
   return '';
+};
+
+/**
+ * 解析 JSON-LD 结构化数据
+ * @param {Object} $ - cheerio实例
+ * @returns {Object} 解析后的JSON对象
+ */
+const parseJsonLd = ($) => {
+  try {
+    const script = $('head > script[type="application/ld+json"]').html();
+    if (!script) return {};
+    
+    const cleaned = script.replace(/[\r\n\t]/g, "");
+    return JSON.parse(cleaned);
+  } catch (error) {
+    console.warn("JSON-LD parsing error:", error);
+    return {};
+  }
+};
+
+/**
+ * 解析评分信息
+ * @param {Object} $ - cheerio实例
+ * @param {Object} ldJson - JSON-LD数据
+ * @returns {Object} 包含评分和投票数的对象
+ */
+const parseRatingInfo = ($, ldJson) => {
+  const ratingInfo = ldJson.aggregateRating || {};
+  const pageRatingAverage = $("#interest_sectl .rating_num").text().trim();
+  const pageVotes = $('#interest_sectl span[property="v:votes"]').text().trim();
+  
+  const average = safe(ratingInfo.ratingValue || pageRatingAverage || "0", "0");
+  const votes = safe(ratingInfo.ratingCount || pageVotes || "0", "0");
+  
+  return {
+    average,
+    votes,
+    formatted: parseFloat(average) > 0 && parseInt(votes) > 0
+      ? `${average} / 10 from ${votes} users`
+      : "0 / 10 from 0 users"
+  };
+};
+
+/**
+ * 提取名人信息的通用函数
+ * @param {Object} $ - cheerio实例
+ * @param {string} section - 区块名称（导演/编剧/演员）
+ * @param {boolean} extractRole - 是否提取角色信息
+ * @returns {Array} 名人信息数组
+ */
+const extractCelebrities = ($, section, extractRole = false) => {
+  const celebrities = [];
+  $(`.list-wrapper h2:contains("${section}")`)
+    .closest(".list-wrapper")
+    .find(".celebrities-list .celebrity")
+    .each(function () {
+      const $el = $(this);
+      const name = $el.find(".info .name a").text().trim();
+      
+      if (!name) return;
+      
+      const link = $el.find(".info .name a").attr("href") || "";
+      const roleText = $el.find(".info .role").text().trim();
+      
+      let role = "";
+      if (extractRole && roleText) {
+        const roleMatch = roleText.match(/饰\s*([^()]+)/);
+        role = roleMatch ? `饰 ${roleMatch[1].trim()}` : "";
+      } else {
+        role = roleText;
+      }
+      
+      const avatarMatch = $el.find(".avatar").attr("style")?.match(/url\(([^)]+)\)/);
+      const avatar = avatarMatch ? avatarMatch[1] : "";
+      
+      celebrities.push({ name, link, role, avatar });
+    });
+  
+  return celebrities;
+};
+
+/**
+ * 获取名人信息（导演、编剧、演员）
+ * @param {string} baseLink - 基础URL
+ * @param {Object} headers - 请求头
+ * @returns {Promise<Object>} 包含导演、编剧、演员信息的对象
+ */
+const fetchCelebritiesInfo = async (baseLink, headers) => {
+  try {
+    const response = await fetchWithTimeout(
+      `${baseLink}celebrities`,
+      { headers },
+      DEFAULT_TIMEOUT
+    );
+    
+    if (!response?.ok) return {};
+    
+    const html = await response.text();
+    const $ = page_parser(html);
+    
+    return {
+      director: extractCelebrities($, "导演"),
+      writer: extractCelebrities($, "编剧"),
+      cast: extractCelebrities($, "演员", true),
+    };
+  } catch (error) {
+    console.error("Celebrities fetch error:", error);
+    return {};
+  }
+};
+
+/**
+ * 获取奖项信息
+ * @param {string} baseLink - 基础URL
+ * @param {Object} headers - 请求头
+ * @returns {Promise<Array>} 奖项信息数组
+ */
+const fetchAwardsInfo = async (baseLink, headers) => {
+  try {
+    const response = await fetchWithTimeout(
+      `${baseLink}awards`,
+      { headers },
+      8000
+    );
+    
+    if (!response?.ok) return [];
+    
+    const html = await response.text();
+    const $ = page_parser(html);
+    const awardSections = [];
+    
+    $(".awards").each(function () {
+      const $awards = $(this);
+      const $hd = $awards.find(".hd h2");
+      const festival = $hd.find("a").text().trim();
+      const year = $hd.find(".year").text().trim();
+      const festivalFull = `${festival} ${year}`;
+      const sectionLines = [festivalFull];
+      
+      $awards.find("ul.award").each(function () {
+        const $ul = $(this);
+        const items = $ul.find("li");
+        
+        if (items.length >= 2) {
+          const category = $(items[0]).text().trim();
+          const winners = $(items[1]).text().trim();
+          const awardInfo = winners ? `${category} ${winners}` : category;
+          sectionLines.push(awardInfo);
+        }
+      });
+      
+      if (sectionLines.length > 1) {
+        awardSections.push(sectionLines.join("\n"));
+      }
+    });
+    
+    const awardsText = awardSections.join("\n\n");
+    return parseDoubanAwards(awardsText);
+  } catch (error) {
+    console.error("Awards fetch error:", error);
+    return [];
+  }
+};
+
+/**
+ * 获取IMDb评分信息
+ * @param {string} imdbId - IMDb ID
+ * @param {Object} headers - 请求头
+ * @returns {Promise<Object|null>} IMDb评分信息
+ */
+const fetchImdbRating = async (imdbId, headers) => {
+  try {
+    const url = `https://p.media-imdb.com/static-content/documents/v1/title/${imdbId}/ratings%3Fjsonp=imdb.rating.run:imdb.api.title.ratings/data.json`;
+    const response = await fetchWithTimeout(url, { headers }, 8000);
+    
+    if (!response?.ok) return null;
+    
+    const raw = await response.text();
+    const json = jsonp_parser(raw);
+    
+    if (!json?.resource) return null;
+    
+    const average = json.resource.rating || 0;
+    const votes = json.resource.ratingCount || 0;
+    
+    return {
+      average,
+      votes,
+      formatted: `${average} / 10 from ${votes} users`
+    };
+  } catch (error) {
+    console.error("IMDb API error:", error);
+    return null;
+  }
+};
+
+/**
+ * 检测反爬虫响应
+ * @param {string} text - 响应文本
+ * @returns {boolean} 是否被反爬虫拦截
+ */
+const isAntiBot = (text) => {
+  return /验证码|检测到有异常请求|机器人程序|访问受限|请先登录/i.test(text);
 };
 
 /**
  * 异步生成指定豆瓣ID对应的影视信息数据
  * @param {string|number} sid - 豆瓣电影的唯一标识符
- * @param {object} env - 环境配置对象，用于获取DOUBAN_COOKIE等配置
- * @returns {Promise<object>} 返回一个包含豆瓣数据的对象，包括基础信息、演员表、评分等，
- *                           若发生错误则返回带有error字段的失败信息
+ * @param {Object} env - 环境配置对象
+ * @returns {Promise<Object>} 返回豆瓣数据对象
  */
 export const gen_douban = async (sid, env) => {
   const data = { site: "douban", sid };
-  if (!sid) return Object.assign(data, { error: "Invalid Douban id" });
-
+  
+  if (!sid) {
+    return { ...data, error: "Invalid Douban id" };
+  }
+  
   const headers = buildHeaders(env);
   const baseLink = `https://movie.douban.com/subject/${encodeURIComponent(sid)}/`;
   const mobileLink = `https://m.douban.com/movie/subject/${encodeURIComponent(sid)}/`;
-
+  
   try {
-    // 请求主页面，遇到非 200 自动尝试移动端回退
-    let resp = await fetchWithTimeout(baseLink, { headers }, DEFAULT_TIMEOUT);
-    if (!resp || (resp.status === 204 || resp.status === 403 || resp.status === 521 || resp.status === 521)) {
-      // 尝试移动端页面回退
+    if (env.ENABLED_CACHE === 'false') { 
+      // 尝试从PtGen Archive获取数据
+      const cachedData = await getStaticMediaDataFromOurBits("douban", sid);
+      if (cachedData) {
+        console.log(`[Cache Hit] GitHub OurBits DB For Douban ${sid}`);
+        return { ...data, ...cachedData, success: true };
+      }
+    }
+    
+    // 请求主页面
+    let response = await fetchWithTimeout(baseLink, { headers }, DEFAULT_TIMEOUT);
+    
+    // 如果主页面失败，尝试移动端
+    const retryStatuses = new Set([204, 403, 521]);
+    if (!response || retryStatuses.has(response.status)) {
       try {
-        const mresp = await fetchWithTimeout(mobileLink, { headers }, DEFAULT_TIMEOUT);
-        if (mresp && mresp.ok) resp = mresp;
-      } catch (e) { 
-        console.warn(`Failed to fetch mobile page for ${sid}:`, e);
+        const mobileResponse = await fetchWithTimeout(mobileLink, { headers }, DEFAULT_TIMEOUT);
+        if (mobileResponse?.ok) {
+          response = mobileResponse;
+        }
+      } catch (error) {
+        console.warn(`Mobile page fallback failed for ${sid}:`, error);
       }
     }
 
-    if (!resp) return Object.assign(data, { error: "No response from Douban" });
-    if (resp.status === 404) return Object.assign(data, { error: NONE_EXIST_ERROR });
-    if (!resp.ok) {
-      const txt = await resp.text().catch(() => '');
-      // 可能是反爬或验证码页面
-      if (/验证码|检测到有异常请求|机器人程序|访问受限/i.test(txt)) {
-        return Object.assign(data, { error: "Douban blocked request (captcha/anti-bot). Provide valid cookie or try later." });
+    if (!response) {
+      return { ...data, error: "No response from Douban" };
+    }
+    
+    if (response.status === 404) {
+      return { ...data, error: NONE_EXIST_ERROR };
+    }
+    
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      if (isAntiBot(text)) {
+        return {
+          ...data,
+          error: "Douban blocked request (captcha/anti-bot). Provide valid cookie or try later."
+        };
       }
-      return Object.assign(data, { error: `Failed to fetch Douban page: ${resp.status} ${txt ? txt.slice(0, 200) : ''}` });
+      return {
+        ...data,
+        error: `Failed to fetch: ${response.status} ${text.slice(0, 200)}`
+      };
     }
-
-    const raw = await resp.text();
-
-    // 快速 anti-bot 检测
-    if (/你想访问的页面不存在/.test(raw)) return Object.assign(data, { error: NONE_EXIST_ERROR });
-    if (/验证码|检测到有异常请求|机器人程序|请先登录|访问受限/i.test(raw)) {
-      return Object.assign(data, { error: "Douban blocked request (captcha/anti-bot). Provide valid cookie or try later." });
+    
+    const html = await response.text();
+    
+    // 反爬虫检测
+    if (/你想访问的页面不存在/.test(html)) {
+      return { ...data, error: NONE_EXIST_ERROR };
     }
-
-    const $ = page_parser(raw);
-    let ld_json = {};
-    try {
-      const script = $('head > script[type="application/ld+json"]').html();
-      if (script) {
-        const cleaned = script.replace(/(\r\n|\n|\r|\t)/g, '');
-        ld_json = JSON.parse(cleaned);
-      }
-    } catch (e) {
-      ld_json = {};
+    
+    if (isAntiBot(html)) {
+      return {
+        ...data,
+        error: "Douban blocked request (captcha/anti-bot). Provide valid cookie or try later."
+      };
     }
-
+    
+    // 解析页面
+    const $ = page_parser(html);
+    const ldJson = parseJsonLd($);
     const title = $("title").text().replace("(豆瓣)", "").trim();
-    const aka_anchor = $('#info span.pl:contains("又名")');
-    const regions_anchor = $('#info span.pl:contains("制片国家/地区")');
-    const language_anchor = $('#info span.pl:contains("语言")');
-    const playdate_nodes = $("#info span[property=\"v:initialReleaseDate\"]");
-    const episodes_anchor = $('#info span.pl:contains("集数")');
-    const duration_anchor = $('#info span.pl:contains("单集片长")');
-    const intro_selector = '#link-report-intra > span.all.hidden, #link-report-intra > [property="v:summary"], #link-report > span.all.hidden, #link-report > [property="v:summary"]';
-    const intro_el = $(intro_selector);
-    const tag_another = $('div.tags-body > a[href^="/tag"]');
-    const rating_info = ld_json.aggregateRating || {};
-    const page_rating_average = $('#interest_sectl .rating_num').text().trim();
-    const page_votes = $('#interest_sectl span[property="v:votes"]').text().trim();
-    const douban_avg = safe(rating_info.ratingValue || page_rating_average || '0', '0');
-    const douban_votes = safe(rating_info.ratingCount || page_votes || '0', '0');
-    const imdb_anchor = $('#info span.pl:contains("IMDb")');
-    const awardsReq = fetchWithTimeout(`${baseLink}awards`, { headers }, 8000).catch(() => null);
-
-    if (tag_another.length > 0) {
-      data.tags = tag_another.map(function () { return $(this).text().trim(); }).get();
-    } 
-
-    if (aka_anchor.length > 0) {
-      const aka_text = fetch_anchor(aka_anchor);
-      if (aka_text) {
-        const parts = aka_text.split(" / ").map(s => s.trim()).filter(Boolean).sort((a,b) => a.localeCompare(b));
-        data.aka = parts;
-      }
+    const foreignTitle = $('span[property="v:itemreviewed"]')
+      .text()
+      .replace(title, "")
+      .trim();
+    
+    const yearMatch = $("#content > h1 > span.year").text().match(/\d{4}/);
+    const year = yearMatch ? yearMatch[0] : "";
+    const akaText = fetchAnchorText($('#info span.pl:contains("又名")'));
+    const aka = akaText
+      ? akaText.split(" / ").map(s => s.trim()).filter(Boolean).sort()
+      : [];
+    
+    const regionText = fetchAnchorText($('#info span.pl:contains("制片国家/地区")'));
+    const region = regionText
+      ? regionText.split(" / ").map(s => s.trim()).filter(Boolean)
+      : [];
+    
+    const languageText = fetchAnchorText($('#info span.pl:contains("语言")'));
+    const language = languageText
+      ? languageText.split(" / ").map(s => s.trim()).filter(Boolean)
+      : [];
+    
+    const genre = $('#info span[property="v:genre"]')
+      .map(function () { return $(this).text().trim(); })
+      .get();
+    
+    const playdate = $('#info span[property="v:initialReleaseDate"]')
+      .map(function () { return $(this).text().trim(); })
+      .get()
+      .sort((a, b) => new Date(a) - new Date(b));
+    
+    const episodes = fetchAnchorText($('#info span.pl:contains("集数")'));
+    const durationText = fetchAnchorText($('#info span.pl:contains("单集片长")'));
+    const duration = durationText || $('#info span[property="v:runtime"]').text().trim() || "";
+    
+    const introSelector = '#link-report-intra > span.all.hidden, #link-report-intra > [property="v:summary"], #link-report > span.all.hidden, #link-report > [property="v:summary"]';
+    const introduction = $(introSelector)
+      .text()
+      .split("\n")
+      .map(s => s.trim())
+      .filter(Boolean)
+      .join("\n");
+    
+    const tags = $('div.tags-body > a[href^="/tag"]')
+      .map(function () { return $(this).text().trim(); })
+      .get();
+    
+    const poster = ldJson.image
+      ? String(ldJson.image)
+          .replace(/s(_ratio_poster|pic)/g, "l$1")
+          .replace("img3", "img1")
+          .replace(/\.webp$/, ".jpg")
+      : "";
+    
+    const doubanRating = parseRatingInfo($, ldJson);
+    const imdbText = fetchAnchorText($('#info span.pl:contains("IMDb")'));
+    let imdbInfo = {};
+    if (imdbText && /^tt\d+$/.test(imdbText)) {
+      data.imdb_id = imdbText;
+      data.imdb_link = `https://www.imdb.com/title/${imdbText}/`;
+      imdbInfo = await fetchImdbRating(imdbText, headers) || {};
     }
-
-    data.douban_link = baseLink;
-    data.chinese_title = safe(title, '');
-    data.foreign_title = safe($('span[property="v:itemreviewed"]').text().replace(data.chinese_title, "").trim(), '');
-    data.year = safe($("#content > h1 > span.year").text().match(/\d{4}/)?.[0] || "", "");
-    data.region = regions_anchor.length ? fetch_anchor(regions_anchor).split(" / ").map(s => s.trim()).filter(Boolean) : [];
-    data.genre = $("#info span[property=\"v:genre\"]").map(function () { return $(this).text().trim(); }).get();
-    data.language = language_anchor.length ? fetch_anchor(language_anchor).split(" / ").map(s => s.trim()).filter(Boolean) : [];
-    data.playdate = playdate_nodes.length ? playdate_nodes.map(function(){ return $(this).text().trim(); }).get().sort((a,b)=>new Date(a)-new Date(b)) : [];
-    data.episodes = episodes_anchor.length ? fetch_anchor(episodes_anchor) : "";
-    data.duration = duration_anchor.length ? fetch_anchor(duration_anchor) : ($("#info span[property=\"v:runtime\"]").text().trim() || "");
-    data.introduction = intro_el.length ? intro_el.text().split('\n').map(s=>s.trim()).filter(Boolean).join('\n') : '';
-    data.poster = ld_json.image ? String(ld_json.image).replace(/s(_ratio_poster|pic)/g, "l$1").replace("img3", "img1").replace(/\.webp$/, ".jpg") : '';
-    data.director = ld_json.director ? (Array.isArray(ld_json.director) ? ld_json.director : [ld_json.director]) : [];
-    data.writer = ld_json.author ? (Array.isArray(ld_json.author) ? ld_json.author : [ld_json.author]) : [];
-    data.cast = ld_json.actor ? (Array.isArray(ld_json.actor) ? ld_json.actor : [ld_json.actor]) : [];
-    data.douban_rating_average = douban_avg;
-    data.douban_votes = douban_votes;
-    data.douban_rating = (parseFloat(douban_avg) > 0 && parseInt(douban_votes) > 0) ? `${douban_avg} / 10 from ${douban_votes} users` : '0 / 10 from 0 users';
-
-    const celebrities = [];
-    $('#celebrities .celebrities-list li.celebrity').each(function() {
-      const $celebrity = $(this);
-      const name = $celebrity.find('.info .name a').text().trim();
-      const link = $celebrity.find('.info .name a').attr('href');
-      const role = $celebrity.find('.info .role').text().trim();
-      const avatarStyle = $celebrity.find('.avatar').attr('style');
-      let avatar = '';
-      
-      if (avatarStyle) {
-        const match = avatarStyle.match(/url\(["']?(.*?)["']?\)/);
-        if (match && match[1]) {
-          avatar = match[1];
-        }
-      }
-      
-      celebrities.push({
-        name,
-        link,
-        role,
-        avatar
-      });
+    
+    // 并发获取名人和奖项信息
+    const [celebritiesInfo, awards] = await Promise.all([
+      fetchCelebritiesInfo(baseLink, headers),
+      fetchAwardsInfo(baseLink, headers)
+    ]);
+    
+    Object.assign(data, {
+      douban_link: baseLink,
+      chinese_title: title,
+      foreign_title: foreignTitle,
+      year,
+      aka,
+      region,
+      genre,
+      language,
+      playdate,
+      episodes,
+      duration,
+      introduction,
+      poster,
+      tags,
+      douban_rating_average: doubanRating.average,
+      douban_votes: doubanRating.votes,
+      douban_rating: doubanRating.formatted,
+      ...celebritiesInfo,
+      awards,
     });
-
-    const celebrityMap = new Map();
-    celebrities.forEach(celebrity => {
-      celebrityMap.set(celebrity.name, celebrity);
-
-      const chineseName = celebrity.name.split(' ')[0];
-      if (chineseName !== celebrity.name) {
-        celebrityMap.set(chineseName, celebrity);
-      }
-    });
-
-    if (data.director && data.director.length > 0) {
-      data.director = data.director.map(director => {
-        let originalName = '';
-        if (typeof director === 'string') {
-          originalName = director;
-          director = { name: director };
-        } else if (director.name) {
-          originalName = director.name;
-        }
-
-        let detailedInfo = celebrityMap.get(originalName);
-
-        if (!detailedInfo) {
-          const chineseName = originalName.split(' ')[0];
-          detailedInfo = celebrityMap.get(chineseName);
-        }
-        
-        if (detailedInfo) {
-          return { ...director, link: detailedInfo.link, role: detailedInfo.role, avatar: detailedInfo.avatar };
-        }
-        return director;
-      });
+    
+    if (imdbInfo.average) {
+      data.imdb_rating_average = imdbInfo.average;
+      data.imdb_votes = imdbInfo.votes;
+      data.imdb_rating = imdbInfo.formatted;
     }
-
-    if (data.cast && data.cast.length > 0) {
-      data.cast = data.cast.map(actor => {
-        let originalName = '';
-        if (typeof actor === 'string') {
-          originalName = actor;
-          actor = { name: actor };
-        } else if (actor.name) {
-          originalName = actor.name;
-        }
-        
-        let detailedInfo = celebrityMap.get(originalName);
-        
-        if (!detailedInfo) {
-          const chineseName = originalName.split(' ')[0];
-          detailedInfo = celebrityMap.get(chineseName);
-        }
-        
-        if (detailedInfo) {
-          return { ...actor, link: detailedInfo.link, role: detailedInfo.role, avatar: detailedInfo.avatar };
-        }
-        return actor;
-      });
-    }
-
-    let imdb_api_req = null;
-    if (imdb_anchor.length > 0) {
-      const imdb_id = fetch_anchor(imdb_anchor).trim();
-      if (imdb_id) {
-        data.imdb_id = imdb_id;
-        data.imdb_link = `https://www.imdb.com/title/${imdb_id}/`;
-        // imdb jsonp endpoint (稳定性依赖第三方)
-        const imdb_jsonp_url = `https://p.media-imdb.com/static-content/documents/v1/title/${imdb_id}/ratings%3Fjsonp=imdb.rating.run:imdb.api.title.ratings/data.json`;
-        imdb_api_req = fetchWithTimeout(imdb_jsonp_url, { headers }, 8000).catch(() => null);
-      }
-    }
-
-    try {
-      let awards = '';
-      const awardsResp = await awardsReq;
-      if (awardsResp && awardsResp.ok) {
-        const awardsRaw = await awardsResp.text();
-        const $aw = page_parser(awardsRaw);
-        const awardItems = [];
-
-        $aw('.awards').each(function() {
-          const $awards = $aw(this);
-          const $hd = $awards.find('.hd h2');
-          const festival = $hd.find('a').text().trim();
-          const year = $hd.find('.year').text().trim();
-          const festivalFull = `${festival} ${year}`;
-          
-          $awards.find('ul.award').each(function() {
-            const $ul = $aw(this);
-            const items = $ul.find('li');
-            if (items.length >= 2) {
-              const category = $aw(items[0]).text().trim();
-              const winners = $aw(items[1]).text().trim();
-              
-              let fullInfo = `${festivalFull} ${category}`;
-              if (winners) {
-                fullInfo += ` ${winners}`;
-              }
-              awardItems.push(fullInfo);
-            }
-          });
-        });
-        
-        data.awards = awardItems;
-        awards = awardItems.join('\n');
-      }
-    } catch (e) { 
-      console.error('Awards parsing error:', e);
-    }
-
-    if (imdb_api_req) {
-      try {
-        const imdbResp = await imdb_api_req;
-        if (imdbResp && imdbResp.ok) {
-          const imdbRaw = await imdbResp.text();
-          const imdb_json = jsonp_parser(imdbRaw);
-          if (imdb_json?.resource) {
-            const avg = imdb_json.resource.rating || 0;
-            const votes = imdb_json.resource.ratingCount || 0;
-            data.imdb_rating_average = avg;
-            data.imdb_votes = votes;
-            data.imdb_rating = `${avg} / 10 from ${votes} users`;
-          }
-        }
-      } catch (e) {
-        console.error('IMDB API request error:', e);
-      }
-    }
-
+    
     data.format = generateDoubanFormat(data);
     data.success = true;
+    
     return data;
   } catch (error) {
-    return Object.assign(data, { error: error?.message || String(error) });
+    return { ...data, error: error?.message || String(error) };
   }
 };

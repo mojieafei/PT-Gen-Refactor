@@ -1,8 +1,9 @@
-import { NONE_EXIST_ERROR, DEFAULT_TIMEOUT, fetchWithTimeout, generateTmdbFormat } from "./common.js";
+import { NONE_EXIST_ERROR, DEFAULT_TIMEOUT, fetchWithTimeout } from "./common.js";
+import { safe } from "./utils.js";
+import { generateTmdbFormat } from "./format.js";
 
 const TMDB_API_URL = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500";
-const safe = (v, fallback = '') => (v === undefined || v === null ? fallback : v);
 
 /**
  * 解析媒体资源标识符SID
@@ -135,8 +136,6 @@ const buildResult = (tmdb_data, media_type) => {
  * @returns {Promise<Object>} 标准化后的媒体信息对象或错误信息
  */
 export const gen_tmdb = async (sid, env) => {
-  const base = { site: "tmdb", sid };
-
   try {
     const TMDB_API_KEY = env?.TMDB_API_KEY;
     if (!TMDB_API_KEY) {
@@ -148,11 +147,11 @@ export const gen_tmdb = async (sid, env) => {
       return Object.assign(base, { error: "Invalid TMDB ID format. Expected 'movie/12345', 'tv/12345' or numeric ID" });
     }
 
-    const { media_type, media_id } = parsed;
+    let { media_type, media_id } = parsed;
     if (!media_type || !media_id) {
       return Object.assign(base, { error: "Invalid TMDB ID format" });
     }
-
+    const base = { site: "tmdb", sid: media_id };
     const params = `api_key=${encodeURIComponent(TMDB_API_KEY)}&language=zh-CN&append_to_response=credits,release_dates,external_ids`;
     const url = `${TMDB_API_URL}/${encodeURIComponent(media_type)}/${encodeURIComponent(media_id)}?${params}`;
     console.log("TMDB request:", url);
@@ -241,8 +240,7 @@ export const gen_tmdb = async (sid, env) => {
               t.data.overview
             );
           }
-          
-          // 如果找到了翻译，则使用它
+
           if (translationToUse) {
             tmdb_data.overview = translationToUse.data.overview;
           }
