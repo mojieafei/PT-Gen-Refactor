@@ -99,10 +99,11 @@ const SOURCE_PROCESSORS = {
   douban: (item) => ({
     year: pick(item, 'year'),
     subtype: pick(item, 'type') || 'movie',
-    title: pick(item, 'title'),
-    subtitle: String(pick(item, 'sub_title') || ''),
+    title: item.data && Array.isArray(item.data) && item.data.length > 0 ? pick(item.data[0], 'name') : '',
+    subtitle: String(item.data && Array.isArray(item.data) && item.data.length > 0 ? pick(item.data[0], 'description') : ''),
     link: buildLink(item, 'douban'),
-    id: pick(item, 'id'),
+    id: pick(item, 'doubanId'),
+    rating: String(pick(item, 'doubanRating') || ''),
     img: pick(item, 'img'),
     episode: pick(item, 'episode')
   }),
@@ -148,7 +149,7 @@ const DEFAULT_FIELDS = (item, source) => ({
            pick(item, 'type') ||
            pick(item, 'q') ||
            'movie',
-  title: pick(item, 'title') || pick(item, 'l'),
+  title: pick(item, 'title') || pick(item, 'l') || pick(item.data, 'name') || '',
   subtitle: pick(item, 'subtitle') ||
             pick(item, 's') ||
             pick(item, 'sub_title') ||
@@ -271,7 +272,7 @@ const buildLink = (item, source) => {
   if (item.link) return String(item.link);
   if (item.url) return String(item.url);
 
-  const id = pick(item, 'id', 'imdb_id', 'douban_id', 'tt');
+  const id = pick(item, 'id', 'imdb_id', 'douban_id', 'tt', 'doubanId');
   if (!id) return '';
 
   const template = LINK_TEMPLATES[source];
@@ -427,6 +428,28 @@ const search_imdb = async (query) => {
   } catch (error) {
     return handleSearchError('IMDb', query, error);
   }
+};
+
+const search_douban = async (query) => { 
+  if (!query) {
+    return { status: 400, success: false, error: 'Invalid query', data: [] };
+  }
+  const SUGGESTION_API_URL = `https://api.wmdb.tv/api/v1/movie/search?q=${encodeURIComponent(query)}&skip=0&lang=Cn`;
+  const response = await fetch(SUGGESTION_API_URL);
+  if (!response.ok) {
+    console.warn(`Douban API search failed: ${response.status}`);
+    // 特别处理429状态码
+    if (response.status === 429) {
+      return { status: response.status, success: false, error: '请求过于频繁，请等待30秒后再试 | Too many requests, please wait 30 seconds and try again', data: [] };
+    }
+    return { status: response.status, success: false, error: '豆瓣API请求失败 | Douban API request failed', data: [] };
+  }
+  const data = await response.json();
+
+  if (data.data.length > 0) {
+    return { success: true, data: processSearchResults(data.data, 'douban').data };
+  }
+  return { status: 404, success: false, error: '未找到查询的结果 | No results found for the given query', data: [] };
 };
 
 /**
@@ -605,6 +628,30 @@ const handleTmdbSearch = async (query, env) => {
   return makeJsonResponse(response, env);
 };
 
+const handleDoubanSearch = async (query, env) => { 
+  const result = await search_douban(query);
+  // 如果是429或400错误，直接返回错误响应而不是包装成成功响应
+  if (result.status === 429 || result.status === 400) {
+    return makeJsonResponse({ 
+      success: false, 
+      error: result.error || "请求过于频繁，请等待30秒后再试 | Too many requests, please wait 30 seconds and try again"
+    }, env, result.status);
+  }
+  
+  const success = result.success && result.data && result.data.length > 0;
+  console.log(JSON.stringify(result));
+  const response = {
+    success,
+    ...(success
+      ? { data: result.data, site: "search-douban" }
+      : {
+          error: result.error || result.message || "Douban搜索未找到相关结果",
+          data: []
+        })
+  };
+  return makeJsonResponse(response, env);
+};
+
 /**
  * 处理搜索请求的异步函数。
  * 根据指定的数据源（如IMDb或TMDb）执行相应的搜索操作，并返回格式化的JSON响应。
@@ -629,7 +676,8 @@ const handleSearchRequest = async (source, query, env) => {
     const normalizedSource = source.toLowerCase();
     const handlers = {
       imdb: handleImdbSearch,
-      tmdb: handleTmdbSearch
+      tmdb: handleTmdbSearch,
+      douban: handleDoubanSearch
     };
     const handler = handlers[normalizedSource];
     if (!handler) {
@@ -663,10 +711,28 @@ const handleAutoSearch = async (query, env) => {
   }
   try {
     const isChinese = isChineseText(query);
-    const provider = isChinese ? { search: search_tmdb, site: "search-tmdb", name: "TMDB" } : { search: search_imdb, site: "search-imdb", name: "IMDb" };
-    console.log(`Using ${provider.name} for query: ${query}`);
-    
-    const searchResult = await (isChinese ? provider.search(query, env) : provider.search(query));
+    let searchResult;
+    let provider;
+
+    if (isChinese) {
+      console.log(`Using douban for query: ${query}`);
+      const doubanResult = await search_douban(query);
+      // 检查是否是因为429错误或者搜索不成功而需要回退到TMDB
+      if (doubanResult.success && doubanResult.data && doubanResult.data.length > 0) {
+        console.log(`Douban search succeeded for query: ${query}`);
+        provider = { search: () => doubanResult, site: "search-douban", name: "Douban" };
+        searchResult = doubanResult;
+      } else {
+        console.log(`Douban search failed (status: ${doubanResult.status}), falling back to TMDB for query: ${query}`);
+        provider = { search: search_tmdb, site: "search-tmdb", name: "TMDB" };
+        searchResult = await search_tmdb(query, env);
+      }
+    } else {
+      console.log(`Using IMDb for query: ${query}`);
+      provider = { search: search_imdb, site: "search-imdb", name: "IMDb" };
+      searchResult = await search_imdb(query);
+    }
+
     console.log(`${provider.name} search completed for query: ${query}`);
     
     const hasData = searchResult.data && searchResult.data.length > 0;
@@ -767,7 +833,7 @@ const handleUrlRequest = async (url_, env) => {
  * @returns {Response}
  */
 const createErrorResponse = (message, status, corsHeaders) => {
-  return new Response(JSON.stringify({ error: message }), {
+  return new Response(JSON.stringify({ success: false, error: message }), {
     status,
     headers: {
       "Content-Type": "application/json",
@@ -796,9 +862,15 @@ const validateRequest = async (request, corsHeaders, env) => {
     const apiKey = url.searchParams.get("key");
 
     if (!apiKey) {
-      if (url.pathname === "/" && request.method === "GET") {
-        return { valid: false, response: await handleRootRequest(env, true) };
+      // 检查是否为浏览器请求（通过 Accept 头部判断）
+      const acceptHeader = request.headers.get('Accept') || '';
+      const isBrowserRequest = acceptHeader.includes('text/html');
+      
+      // 对于根路径，根据请求类型决定返回什么
+      if ((url.pathname === '/' || url.pathname === '/api') && request.method === "GET" && isBrowserRequest) {
+          return { valid: false, response: await handleRootRequest(env, true) };
       }
+      
       return {
         valid: false,
         response: createErrorResponse("API key required. Access denied.", 401, corsHeaders),
@@ -936,7 +1008,7 @@ const _extractParams = async (request, uri) => {
 const _withCache = async (resourceId, fetchFunction, env, source, subType = null) => {
   const isCacheEnabled = env.ENABLED_CACHE !== 'false';
   const sourcesWithNoCache = ['douban', 'imdb', 'bangumi', 'steam'];
-  if (!isCacheEnabled || sourcesWithNoCache.includes(source)) {
+  if (!isCacheEnabled && sourcesWithNoCache.includes(source)) {
     console.log(`[Cache Disabled] Fetching data for resource: ${resourceId}`);
     return await fetchFunction();
   }
@@ -1362,17 +1434,27 @@ export const handleRequest = async (request, env) => {
     return validation.response;
   }
   
-  const { pathname } = new URL(request.url);
+  const url = new URL(request.url);
+  const { pathname } = url;
   const { method } = request;
   const isApiPath = pathname === '/' || pathname === '/api';
   
   if (isApiPath) {
     if (method === 'POST') {
-      return await handleQueryRequest(request, env, new URL(request.url));
+      return await handleQueryRequest(request, env, url);
     }
 
     if (method === 'GET') {
-      return handleRootRequest(env, true);
+      const apiKey = url.searchParams.get("key");
+      if (pathname === '/' && !apiKey) {
+        return handleRootRequest(env, true);
+      } else if (pathname === '/api' && !apiKey) {
+        // /api路径无key参数：返回JSON错误
+        return createErrorResponse("API key required. Access denied.", 401, CORS_HEADERS);
+      } else {
+        // 其他情况（有key或特定路径）：处理查询请求
+        return await handleQueryRequest(request, env, url);
+      }
     }
   }
 

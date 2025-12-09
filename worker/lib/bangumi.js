@@ -141,7 +141,6 @@ export async function gen_bangumi(sid, env) {
       console.warn(`[bgm] unexpected error fetching characters for ${sid}`, err.message);
     }
 
-    const charList = formatCharacters(ensureArray(characters));
     data.bgm_id = subject.id ?? sid;
     data.name = safe(subject.name);
     data.name_cn = safe(getInfoboxValue(subject.infobox, '中文名'), subject.name_cn);
@@ -177,7 +176,7 @@ export async function gen_bangumi(sid, env) {
     data.type = normalizeType(subject) || '';
     data.eps = subject.eps ?? subject.total_episodes ?? '';
     data.tags = Array.isArray(subject.meta_tags) ? subject.meta_tags : [];
-    data.characters = charList;
+    data.characters = characters;
     data.format = generateBangumiFormat(data);
     data.success = true;
 

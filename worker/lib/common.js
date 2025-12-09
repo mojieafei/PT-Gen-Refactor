@@ -146,14 +146,15 @@ export const makeJsonRawResponse = (body, initOverride) => {
  * 合并默认字段并返回 Response
  * @param {Object} body_update
  * @param {Object} env - 环境变量对象，用于获取AUTHOR等配置
+ * @param {number} status - HTTP状态码，默认为200
  * @returns {Response}
  */
-export const makeJsonResponse = (body_update, env) => {
+export const makeJsonResponse = (body_update, env, status = 200) => {
   const body = {
     ...DEFAULT_BODY_TEMPLATE,
     copyright: `Powered by @${env?.AUTHOR || AUTHOR}`,
     generate_at: Date.now(),
     ...(body_update || {})
   };
-  return makeJsonRawResponse(body);
+  return makeJsonRawResponse(body, { status });
 };

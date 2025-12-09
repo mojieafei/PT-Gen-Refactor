@@ -22,6 +22,7 @@ frontend/dist/
 
 # Wrangler local state
 .wrangler/
+wrangler-backup.toml
 
 # Logs
 *.log

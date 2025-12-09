@@ -609,7 +609,8 @@ export const generateBangumiFormat = (data) => {
   if (writerLine) lines.push(writerLine);
 
   if (isValidArray(data.characters)) {
-    const content = data.characters.slice(0, 20).join(' / ').trim();
+    const charList = formatCharacters(ensureArray(data.characters));
+    const content = charList.slice(0, 20).join(' / ').trim();
     lines.push(formatWrappedLine({
       label: '❁ 角色信息:　',
       content,

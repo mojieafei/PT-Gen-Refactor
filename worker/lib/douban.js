@@ -147,22 +147,47 @@ const extractCelebrities = ($, section, extractRole = false) => {
  */
 const fetchCelebritiesInfo = async (baseLink, headers) => {
   try {
-    const response = await fetchWithTimeout(
-      `${baseLink}celebrities`,
-      { headers },
-      DEFAULT_TIMEOUT
-    );
+    // 添加重试逻辑，最多重试3次
+    let lastError;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const response = await fetchWithTimeout(
+          `${baseLink}celebrities`,
+          { headers },
+          DEFAULT_TIMEOUT
+        );
+        
+        if (!response?.ok) {
+          lastError = new Error(`HTTP ${response?.status}: ${response?.statusText}`);
+          // 如果是客户端错误(4xx)，不重试
+          if (response?.status >= 400 && response?.status < 500) {
+            break;
+          }
+          continue;
+        }
+        
+        const html = await response.text();
+        const $ = page_parser(html);
+        
+        return {
+          director: extractCelebrities($, "导演"),
+          writer: extractCelebrities($, "编剧"),
+          cast: extractCelebrities($, "演员", true),
+        };
+      } catch (error) {
+        lastError = error;
+        // 如果是超时错误，继续重试
+        if (error?.name === 'AbortError' && i < 2) {
+          console.warn(`Celebrities fetch attempt ${i + 1} failed, retrying...`, error.message);
+          continue;
+        }
+        // 其他错误直接抛出
+        break;
+      }
+    }
     
-    if (!response?.ok) return {};
-    
-    const html = await response.text();
-    const $ = page_parser(html);
-    
-    return {
-      director: extractCelebrities($, "导演"),
-      writer: extractCelebrities($, "编剧"),
-      cast: extractCelebrities($, "演员", true),
-    };
+    console.error("Celebrities fetch failed after retries:", lastError);
+    return {};
   } catch (error) {
     console.error("Celebrities fetch error:", error);
     return {};
@@ -177,45 +202,70 @@ const fetchCelebritiesInfo = async (baseLink, headers) => {
  */
 const fetchAwardsInfo = async (baseLink, headers) => {
   try {
-    const response = await fetchWithTimeout(
-      `${baseLink}awards`,
-      { headers },
-      8000
-    );
-    
-    if (!response?.ok) return [];
-    
-    const html = await response.text();
-    const $ = page_parser(html);
-    const awardSections = [];
-    
-    $(".awards").each(function () {
-      const $awards = $(this);
-      const $hd = $awards.find(".hd h2");
-      const festival = $hd.find("a").text().trim();
-      const year = $hd.find(".year").text().trim();
-      const festivalFull = `${festival} ${year}`;
-      const sectionLines = [festivalFull];
-      
-      $awards.find("ul.award").each(function () {
-        const $ul = $(this);
-        const items = $ul.find("li");
+    // 添加重试逻辑，最多重试3次
+    let lastError;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const response = await fetchWithTimeout(
+          `${baseLink}awards`,
+          { headers },
+          8000
+        );
         
-        if (items.length >= 2) {
-          const category = $(items[0]).text().trim();
-          const winners = $(items[1]).text().trim();
-          const awardInfo = winners ? `${category} ${winners}` : category;
-          sectionLines.push(awardInfo);
+        if (!response?.ok) {
+          lastError = new Error(`HTTP ${response?.status}: ${response?.statusText}`);
+          // 如果是客户端错误(4xx)，不重试
+          if (response?.status >= 400 && response?.status < 500) {
+            break;
+          }
+          continue;
         }
-      });
-      
-      if (sectionLines.length > 1) {
-        awardSections.push(sectionLines.join("\n"));
+        
+        const html = await response.text();
+        const $ = page_parser(html);
+        const awardSections = [];
+        
+        $(".awards").each(function () {
+          const $awards = $(this);
+          const $hd = $awards.find(".hd h2");
+          const festival = $hd.find("a").text().trim();
+          const year = $hd.find(".year").text().trim();
+          const festivalFull = `${festival} ${year}`;
+          const sectionLines = [festivalFull];
+          
+          $awards.find("ul.award").each(function () {
+            const $ul = $(this);
+            const items = $ul.find("li");
+            
+            if (items.length >= 2) {
+              const category = $(items[0]).text().trim();
+              const winners = $(items[1]).text().trim();
+              const awardInfo = winners ? `${category} ${winners}` : category;
+              sectionLines.push(awardInfo);
+            }
+          });
+          
+          if (sectionLines.length > 1) {
+            awardSections.push(sectionLines.join("\n"));
+          }
+        });
+        
+        const awardsText = awardSections.join("\n\n");
+        return parseDoubanAwards(awardsText);
+      } catch (error) {
+        lastError = error;
+        // 如果是超时错误，继续重试
+        if (error?.name === 'AbortError' && i < 2) {
+          console.warn(`Awards fetch attempt ${i + 1} failed, retrying...`, error.message);
+          continue;
+        }
+        // 其他错误直接抛出
+        break;
       }
-    });
+    }
     
-    const awardsText = awardSections.join("\n\n");
-    return parseDoubanAwards(awardsText);
+    console.error("Awards fetch failed after retries:", lastError);
+    return [];
   } catch (error) {
     console.error("Awards fetch error:", error);
     return [];
@@ -230,24 +280,52 @@ const fetchAwardsInfo = async (baseLink, headers) => {
  */
 const fetchImdbRating = async (imdbId, headers) => {
   try {
-    const url = `https://p.media-imdb.com/static-content/documents/v1/title/${imdbId}/ratings%3Fjsonp=imdb.rating.run:imdb.api.title.ratings/data.json`;
-    const response = await fetchWithTimeout(url, { headers }, 8000);
+    // 添加重试逻辑，最多重试3次
+    let lastError;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const url = `https://p.media-imdb.com/static-content/documents/v1/title/${imdbId}/ratings%3Fjsonp=imdb.rating.run:imdb.api.title.ratings/data.json`;
+        const response = await fetchWithTimeout(url, { headers }, 8000);
+        
+        if (!response?.ok) {
+          lastError = new Error(`HTTP ${response?.status}: ${response?.statusText}`);
+          // 如果是客户端错误(4xx)，不重试
+          if (response?.status >= 400 && response?.status < 500) {
+            break;
+          }
+          continue;
+        }
+        
+        const raw = await response.text();
+        const json = jsonp_parser(raw);
+        
+        if (!json?.resource) {
+          lastError = new Error("Invalid JSON response");
+          continue;
+        }
+        
+        const average = json.resource.rating || 0;
+        const votes = json.resource.ratingCount || 0;
+        
+        return {
+          average,
+          votes,
+          formatted: `${average} / 10 from ${votes} users`
+        };
+      } catch (error) {
+        lastError = error;
+        // 如果是超时错误，继续重试
+        if (error?.name === 'AbortError' && i < 2) {
+          console.warn(`IMDb rating fetch attempt ${i + 1} failed, retrying...`, error.message);
+          continue;
+        }
+        // 其他错误直接抛出
+        break;
+      }
+    }
     
-    if (!response?.ok) return null;
-    
-    const raw = await response.text();
-    const json = jsonp_parser(raw);
-    
-    if (!json?.resource) return null;
-    
-    const average = json.resource.rating || 0;
-    const votes = json.resource.ratingCount || 0;
-    
-    return {
-      average,
-      votes,
-      formatted: `${average} / 10 from ${votes} users`
-    };
+    console.error("IMDb rating fetch failed after retries:", lastError);
+    return null;
   } catch (error) {
     console.error("IMDb API error:", error);
     return null;
