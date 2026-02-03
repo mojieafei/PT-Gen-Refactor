@@ -13,15 +13,16 @@ COPY worker/package*.json ./worker/
 COPY frontend/package*.json ./frontend/
 
 # 安装根目录依赖（包含 devDependencies，因为需要 wrangler）
-RUN npm ci --ignore-scripts
+# 使用 npm install 而不是 npm ci，更兼容
+RUN npm install --ignore-scripts
 
 # 安装 worker 依赖
 WORKDIR /app/worker
-RUN npm ci --ignore-scripts
+RUN npm install --ignore-scripts
 
 # 安装前端依赖
 WORKDIR /app/frontend
-RUN npm ci --ignore-scripts
+RUN npm install --ignore-scripts
 
 # 构建前端
 RUN npm run build
