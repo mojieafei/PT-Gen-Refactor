@@ -1,0 +1,44 @@
+# 使用 Node.js 18 作为基础镜像
+FROM node:18-alpine
+
+# 安装必要的系统依赖
+RUN apk add --no-cache git
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制 package 文件（利用 Docker 缓存层）
+COPY package*.json ./
+COPY worker/package*.json ./worker/
+COPY frontend/package*.json ./frontend/
+
+# 安装根目录依赖（包含 devDependencies，因为需要 wrangler）
+RUN npm ci --ignore-scripts
+
+# 安装 worker 依赖
+WORKDIR /app/worker
+RUN npm ci --ignore-scripts
+
+# 安装前端依赖
+WORKDIR /app/frontend
+RUN npm ci --ignore-scripts
+
+# 构建前端
+RUN npm run build
+
+# 返回根目录
+WORKDIR /app
+
+# 复制项目文件
+COPY . .
+
+# 暴露端口（wrangler dev 默认使用 8787）
+EXPOSE 8787
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:8787/', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# 启动开发服务器
+CMD ["npm", "run", "dev"]
+

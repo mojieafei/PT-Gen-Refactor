@@ -1,0 +1,42 @@
+# 部署时需要复制的文件清单
+# 使用此清单确保所有必需文件都已复制
+
+## 必需文件（必须复制）
+docker-compose.yml
+Dockerfile
+.dockerignore
+package.json
+package-lock.json
+wrangler.toml
+
+## 必需目录（整个目录复制）
+worker/
+  - package.json
+  - package-lock.json
+  - index.js
+  - rollup.config.js
+  - lib/ (所有文件)
+
+frontend/
+  - package.json
+  - package-lock.json
+  - vite.config.js
+  - tailwind.config.js
+  - postcss.config.js
+  - index.html
+  - src/ (所有文件)
+
+## 可选文件（建议复制）
+.docker-compose.env.example
+README.md
+DEPLOY.md
+LICENSE
+
+## 不需要复制的文件/目录
+node_modules/
+.git/
+dist/
+.wrangler/
+*.log
+.env (需要在新机器上重新创建)
+

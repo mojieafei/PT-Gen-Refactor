@@ -10,7 +10,7 @@ binding = "ASSETS"
 [vars]
 AUTHOR = "Hares"
 TMDB_API_KEY = ""
-#DOUBAN_COOKIE = ''
+DOUBAN_COOKIE = 'll="108288"; bid=kuXrYJv8FTc; _vwo_uuid_v2=DDAE89FAEEEF9F46F7692FB02B09D3101|a0f9dd17161826d2aa313b9f28bfc14e; Hm_lvt_6d4a8cfea88fa457c3127e14fb5fabc2=1767506168,1767597526,1768885145; viewed="36661181"; _ga=GA1.1.364297946.1767506169; _ga_Y4GN1R87RG=GS2.1.s1768885145$o3$g1$t1768885158$j47$l0$h0; __utmc=30149280; ap_v=0,6.0; dbcl2="196683449:KI6AfzPHuOI"; ck=mbRC; frodotk_db="5783a56c5cb4fd64068af045161ef82c"; __utma=30149280.1859772410.1766069177.1769739057.1769741010.13; __utmb=30149280.0.10.1769741010; __utmz=30149280.1769741010.13.10.utmcsr=accounts.douban.com|utmccn=(referral)|utmcmd=referral|utmcct=/; push_noty_num=0; push_doumail_num=0'
 #QQ_COOKIE = ''
 #API_KEY = ""
 #ENABLED_CACHE = "true"

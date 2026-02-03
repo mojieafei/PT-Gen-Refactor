@@ -310,13 +310,11 @@ export const gen_douban = async (sid, env) => {
   )}/`;
 
   try {
-    if (env.ENABLED_CACHE === "false") {
-      // 尝试从PtGen Archive获取数据
-      const cachedData = await getStaticMediaDataFromOurBits("douban", sid);
-      if (cachedData) {
-        console.log(`[Cache Hit] GitHub OurBits DB For Douban ${sid}`);
-        return { ...data, ...cachedData, success: true };
-      }
+    // 首先尝试从静态 CDN 获取数据（如果可用）
+    const cachedData = await getStaticMediaDataFromOurBits("douban", sid);
+    if (cachedData) {
+      console.log(`[Cache Hit] Static CDN For Douban ${sid}`);
+      return { ...data, ...cachedData, success: true };
     }
 
     // 请求主页面
@@ -329,11 +327,13 @@ export const gen_douban = async (sid, env) => {
     const retryStatuses = new Set([204, 403, 521]);
     if (!response || retryStatuses.has(response.status)) {
       try {
+        console.log(`[Douban ${sid}] Desktop page failed (${response?.status}), trying mobile...`);
         const mobileResponse = await fetchWithTimeout(
           mobileLink,
           { headers }
         );
         if (mobileResponse?.ok) {
+          console.log(`[Douban ${sid}] Using mobile page`);
           response = mobileResponse;
         }
       } catch (error) {
@@ -344,6 +344,8 @@ export const gen_douban = async (sid, env) => {
     if (!response) {
       return { ...data, error: "No response from Douban" };
     }
+
+    console.log(`[Douban ${sid}] Response status: ${response.status}, ok: ${response.ok}`);
 
     if (response.status === 404) {
       return { ...data, error: NONE_EXIST_ERROR };
@@ -360,23 +362,106 @@ export const gen_douban = async (sid, env) => {
     }
 
     const html = await response.text();
+    console.log(`[Douban ${sid}] HTML length: ${html.length}`);
+    
+    // 检查是否是有效的 HTML 页面
+    const hasValidStructure = html.includes("<html") || html.includes("<!DOCTYPE");
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const pageTitle = titleMatch ? titleMatch[1].trim() : "";
+    
+    console.log(`[Douban ${sid}] Has valid structure: ${hasValidStructure}, Page title: "${pageTitle}"`);
 
     if (NOT_FOUND_PATTERN.test(html)) {
       return { ...data, error: NONE_EXIST_ERROR };
     }
 
     if (isAntiBot(html)) {
+      console.log(`[Douban ${sid}] Anti-bot detected`);
       return { ...data, error: ANTI_BOT_ERROR };
+    }
+    
+    // 如果 HTML 太短或没有有效结构，可能是错误页面
+    if (html.length < 1000 || (!hasValidStructure && html.length < 5000)) {
+      console.warn(`[Douban ${sid}] HTML seems too short or invalid: ${html.length} chars`);
+      // 尝试从静态 CDN 获取
+      if (env.ENABLED_CACHE !== "false") {
+        const cachedData = await getStaticMediaDataFromOurBits("douban", sid);
+        if (cachedData) {
+          console.log(`[Douban ${sid}] Using cached data from CDN`);
+          return { ...data, ...cachedData, success: true };
+        }
+      }
+      return { 
+        ...data, 
+        error: `页面内容异常（长度: ${html.length}），可能遇到反爬虫限制。请稍后重试或提供有效的 Cookie。` 
+      };
     }
 
     // 解析页面
     const $ = page_parser(html);
     const ldJson = parseJsonLd($);
-    const title = $("title").text().replace("(豆瓣)", "").trim();
-    const foreignTitle = $('span[property="v:itemreviewed"]')
-      .text()
-      .replace(title, "")
-      .trim();
+    
+    // 优先从 JSON-LD 或页面元素中提取标题
+    let title = "";
+    let foreignTitle = "";
+    
+    // 尝试从 JSON-LD 获取标题（最可靠）
+    if (ldJson?.name) {
+      title = String(ldJson.name).trim();
+    }
+    
+    // 如果 JSON-LD 没有，尝试从页面元素获取
+    if (!title || title === "豆瓣" || title.toLowerCase().includes("douban")) {
+      // 方法1: 从 h1 中提取（最常见的结构）
+      const h1Title = $("#content > h1").text().trim() || $("#wrapper > #content > h1").text().trim();
+      if (h1Title && !h1Title.includes("豆瓣") && h1Title.length > 1) {
+        // 从 h1 中提取标题（去掉年份部分）
+        title = h1Title.replace(/\s*\(\d{4}\)\s*$/, "").trim();
+      }
+      
+      // 方法2: 从 span[property="v:itemreviewed"] 获取
+      if (!title || title === "豆瓣") {
+        const itemReviewed = $('span[property="v:itemreviewed"]').text().trim();
+        if (itemReviewed && itemReviewed.length > 1 && !itemReviewed.includes("豆瓣")) {
+          title = itemReviewed;
+        }
+      }
+      
+      // 方法3: 从 title 标签获取（最后手段）
+      if (!title || title === "豆瓣") {
+        const titleText = $("title").text().replace("(豆瓣)", "").trim();
+        if (titleText && titleText !== "豆瓣" && !titleText.toLowerCase().includes("douban") && titleText.length > 1) {
+          title = titleText;
+        }
+      }
+    }
+    
+    // 提取外文标题
+    const itemReviewed = $('span[property="v:itemreviewed"]').text().trim();
+    if (itemReviewed && itemReviewed !== title && itemReviewed.length > title.length) {
+      // 如果 itemReviewed 包含更多内容，可能是中英文混合
+      foreignTitle = itemReviewed.replace(title, "").trim();
+    }
+    
+    // 检查页面是否有效加载
+    const hasContent = $("#content").length > 0 || $("#mainpic").length > 0 || ldJson?.name || title;
+    const isLoadPage = html.includes("载入中") || html.includes("loading");
+    const isInvalidTitle = !title || title === "豆瓣" || title.length <= 1;
+    
+    // 如果标题无效且页面看起来是加载页面，返回错误
+    if (isInvalidTitle && (isLoadPage || !hasContent)) {
+      console.warn(`Failed to extract title for Douban ID ${sid}. Page may not be fully loaded.`);
+      return { 
+        ...data, 
+        error: "页面加载失败，可能遇到反爬虫限制。请稍后重试或提供有效的 Cookie。" 
+      };
+    }
+    
+    // 如果标题仍然无效，但页面有内容，继续尝试提取其他信息
+    if (isInvalidTitle) {
+      console.warn(`Warning: Title extraction failed for Douban ID ${sid}, but continuing with other fields.`);
+      title = ""; // 设置为空，让后续代码处理
+    }
 
     const yearMatch = $("#content > h1 > span.year").text().match(/\d{4}/);
     const year = yearMatch ? yearMatch[0] : "";
