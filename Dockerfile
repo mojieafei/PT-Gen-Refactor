@@ -24,15 +24,14 @@ RUN npm install --ignore-scripts
 WORKDIR /app/frontend
 RUN npm install --ignore-scripts
 
-# 复制前端源码文件（构建需要）
-COPY frontend/index.html ./frontend/
-COPY frontend/src ./frontend/src/
-COPY frontend/vite.config.js ./frontend/
-COPY frontend/tailwind.config.js ./frontend/
-COPY frontend/postcss.config.js ./frontend/
+# 复制前端源码文件（构建需要，当前工作目录是 /app/frontend）
+COPY frontend/index.html ./
+COPY frontend/src ./src/
+COPY frontend/vite.config.js ./
+COPY frontend/tailwind.config.js ./
+COPY frontend/postcss.config.js ./
 
 # 构建前端
-WORKDIR /app/frontend
 RUN npm run build
 
 # 返回根目录
