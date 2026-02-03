@@ -1,5 +1,5 @@
-# 使用 Node.js 18 作为基础镜像
-FROM node:18-alpine
+# 使用 Node.js 20 作为基础镜像（Vite 7 需要 Node.js 20.19+）
+FROM node:20-alpine
 
 # 安装必要的系统依赖
 RUN apk add --no-cache git
@@ -24,13 +24,21 @@ RUN npm install --ignore-scripts
 WORKDIR /app/frontend
 RUN npm install --ignore-scripts
 
+# 复制前端源码文件（构建需要）
+COPY frontend/index.html ./frontend/
+COPY frontend/src ./frontend/src/
+COPY frontend/vite.config.js ./frontend/
+COPY frontend/tailwind.config.js ./frontend/
+COPY frontend/postcss.config.js ./frontend/
+
 # 构建前端
+WORKDIR /app/frontend
 RUN npm run build
 
 # 返回根目录
 WORKDIR /app
 
-# 复制项目文件
+# 复制剩余项目文件
 COPY . .
 
 # 暴露端口（wrangler dev 默认使用 8787）
