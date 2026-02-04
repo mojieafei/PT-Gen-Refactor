@@ -5,7 +5,7 @@
   "description": "Cloudflare Worker for PT-Gen Refactor",
   "main": "index.js",
   "scripts": {
-    "dev": "npx wrangler dev",
+    "dev": "npx wrangler dev --host 0.0.0.0",
     "deploy": "npx wrangler deploy",
     "build": "rollup -c"
   },
