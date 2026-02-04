@@ -1,8 +1,13 @@
 # 使用 Node.js 20 作为基础镜像（Vite 7 需要 Node.js 20.19+）
-FROM node:20-alpine
+# 使用完整版而不是 alpine，因为 wrangler 需要 workerd 二进制文件
+FROM node:20-slim
 
 # 安装必要的系统依赖
-RUN apk add --no-cache git
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
 WORKDIR /app
@@ -16,9 +21,9 @@ COPY frontend/package*.json ./frontend/
 # 使用 npm install 而不是 npm ci，更兼容
 RUN npm install --ignore-scripts
 
-# 安装 worker 依赖
+# 安装 worker 依赖（需要执行脚本以安装 workerd 二进制文件）
 WORKDIR /app/worker
-RUN npm install --ignore-scripts
+RUN npm install
 
 # 安装前端依赖
 WORKDIR /app/frontend
