@@ -1069,19 +1069,23 @@ const validateRequest = async (request, corsHeaders, env) => {
   const isInternalRequest =
     request.headers.get("X-Internal-Request") === "true";
 
-  if (env?.API_KEY && !isInternalRequest) {
-    const apiKey = url.searchParams.get("key");
+  // 检查是否有 key 参数（无论是否配置了 API_KEY）
+  const apiKey = url.searchParams.get("key");
+  const hasApiKeyParam = !!apiKey;
 
+  if (env?.API_KEY && !isInternalRequest) {
     if (!apiKey) {
       // 检查是否为浏览器请求（通过 Accept 头部判断）
       const acceptHeader = request.headers.get("Accept") || "";
       const isBrowserRequest = acceptHeader.includes("text/html");
 
       // 对于根路径，根据请求类型决定返回什么
+      // 但如果请求中有 key 参数，说明是 API 请求，应该返回 JSON 而不是前端页面
       if (
         (url.pathname === "/" || url.pathname === "/api") &&
         request.method === "GET" &&
-        isBrowserRequest
+        isBrowserRequest &&
+        !hasApiKeyParam
       ) {
         return { valid: false, response: await handleRootRequest(env, true) };
       }
@@ -1106,6 +1110,23 @@ const validateRequest = async (request, corsHeaders, env) => {
         ),
       };
     }
+  } else if (!env?.API_KEY) {
+    // 没有配置 API_KEY，但检查是否有 key 参数
+    // 如果有 key 参数，说明是 API 请求，不应该返回前端页面
+    // 如果没有 key 参数，且是浏览器请求，返回前端页面
+    if (!hasApiKeyParam) {
+      const acceptHeader = request.headers.get("Accept") || "";
+      const isBrowserRequest = acceptHeader.includes("text/html");
+      
+      if (
+        (url.pathname === "/" || url.pathname === "/api") &&
+        request.method === "GET" &&
+        isBrowserRequest
+      ) {
+        return { valid: false, response: await handleRootRequest(env, true) };
+      }
+    }
+    // 如果有 key 参数，即使没有配置 API_KEY，也继续处理（会返回参数错误）
   }
 
   if (isMaliciousRequest(request.url)) {
