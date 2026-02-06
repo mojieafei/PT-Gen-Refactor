@@ -20,6 +20,8 @@ COPY frontend/package*.json ./frontend/
 # 安装根目录依赖（包含 devDependencies，因为需要 wrangler）
 # 使用 npm install 而不是 npm ci，更兼容
 RUN npm install --ignore-scripts
+# 更新 wrangler 到最新版本以确保 --host 和 --port 参数正常工作
+RUN npm install wrangler@latest --save-dev
 
 # 安装 worker 依赖（需要执行脚本以安装 workerd 二进制文件）
 WORKDIR /app/worker
@@ -49,8 +51,8 @@ COPY . .
 EXPOSE 8787
 
 # 健康检查
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:8787/', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:8787/', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => process.exit(1))"
 
 # 启动开发服务器
 CMD ["npm", "run", "dev"]
